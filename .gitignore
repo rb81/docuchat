@@ -1,0 +1,5 @@
+venv
+.venv
+__pycache__
+config.py
+.DS_Store
