@@ -12,7 +12,8 @@ from src.indexer import Indexer
 from src.query_processor import QueryProcessor
 from src.llm_interface import LLMInterface
 from src.citation_manager import CitationManager
-from config import DOCUMENT_SOURCE_DIR, DB_STORAGE_DIR, TRANSCRIPT_DIR
+from src.menu import choose_source
+from config import DOCUMENT_SOURCE_DIRS, DB_STORAGE_DIR, TRANSCRIPT_DIR
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
@@ -28,44 +29,45 @@ class DocuChat:
         self.conversation = []
         self.thinking = False
         self.thinking_thread = None
+        self.current_source = None
         signal.signal(signal.SIGINT, self.signal_handler)
 
     def clear_screen(self):
         os.system('cls' if os.name == 'nt' else 'clear')
 
     def setup_rag_system(self):
-        logger.info(f"Setting up DocuChat. Using source directory: {DOCUMENT_SOURCE_DIR}")
+        logger.info(f"Setting up DocuChat. Using source directories: {DOCUMENT_SOURCE_DIRS}")
         logger.info(f"Database storage directory: {DB_STORAGE_DIR}")
         
-        if os.path.isdir(DOCUMENT_SOURCE_DIR):
-            print(f"{Fore.CYAN}Analyzing directory contents...{Style.RESET_ALL}\n")
-            display_file_count(DOCUMENT_SOURCE_DIR)
-            
-            print(f"\n{Fore.CYAN}Scanning and processing files...{Style.RESET_ALL}\n")
-            files = scan_files(DOCUMENT_SOURCE_DIR, show_progress=True)
-            logger.info(f"Found {len(files)} supported files to process")
-            
-            self.indexer = Indexer()
-            
-            if self.indexer.check_for_changes(files):
-                logger.info("Changes detected in documents. Reprocessing...")
-                chunks = process_documents(files, show_progress=True)
-                logger.info(f"Processed documents into {len(chunks)} chunks")
+        self.indexer = Indexer()
+        self.llm_interface = LLMInterface()
+
+        for source_dir in DOCUMENT_SOURCE_DIRS:
+            if os.path.isdir(source_dir):
+                print(f"{Fore.CYAN}Analyzing directory contents for {source_dir}...{Style.RESET_ALL}\n")
+                display_file_count(source_dir)
                 
-                print(f"{Fore.CYAN}Creating index...{Style.RESET_ALL}")
-                self.indexer.create_index(chunks, show_progress=True)
-                self.indexer.cache_document_hashes(files)
-                logger.info(f"Index created and stored in {self.indexer.persist_directory}")
+                print(f"\n{Fore.CYAN}Scanning and processing files...{Style.RESET_ALL}\n")
+                files = scan_files(source_dir, show_progress=True)
+                logger.info(f"Found {len(files)} supported files to process in {source_dir}")
+                
+                if self.indexer.check_for_changes(files, source_dir):  # Pass both arguments here
+                    logger.info(f"Changes detected in documents for {source_dir}. Reprocessing...")
+                    chunks = process_documents(files, show_progress=True)
+                    logger.info(f"Processed documents into {len(chunks)} chunks")
+                    
+                    print(f"\n{Fore.CYAN}Updating index for {source_dir}...{Style.RESET_ALL}\n")
+                    self.indexer.update_index(chunks, source_dir)
+                    self.indexer.cache_document_hashes(files, source_dir)
+                    logger.info(f"Index updated for {source_dir}")
+                else:
+                    logger.info(f"No changes detected in documents for {source_dir}. Using existing index.")
             else:
-                logger.info("No changes detected in documents. Using existing index.")
-            
-            self.query_processor = QueryProcessor(self.indexer)
-            self.llm_interface = LLMInterface()
-            logger.info(f"DocuChat setup complete. Processed {len(files)} files.")
-            print(f"\n{Fore.GREEN}Setup complete. Processed {len(files)} files.{Style.RESET_ALL}\n")
-        else:
-            logger.error(f"Invalid source directory: {DOCUMENT_SOURCE_DIR}")
-            raise ValueError(f"Invalid source directory: {DOCUMENT_SOURCE_DIR}. Please check your configuration.")
+                logger.error(f"Invalid source directory: {source_dir}")
+
+        self.query_processor = QueryProcessor(self.indexer)
+        logger.info("DocuChat setup complete.")
+        print(f"{Fore.GREEN}Setup complete. All source directories processed.{Style.RESET_ALL}\n")
 
     def print_user_query(self, query):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -87,7 +89,7 @@ class DocuChat:
         animation = "|/-\\"
         idx = 0
         while self.thinking:
-            sys.stdout.write(f"\r{Style.BRIGHT}Assistant is thinking... {animation[idx % len(animation)]}")
+            sys.stdout.write(f"\r{Fore.GREEN}Assistant is thinking... {animation[idx % len(animation)]}")
             sys.stdout.flush()
             idx += 1
             time.sleep(0.1)
@@ -135,6 +137,15 @@ class DocuChat:
         sys.stdout.write('\033[1A\033[K\033[1A')  # Move up and clear the entire line
         sys.stdout.flush()
         return user_input
+    
+    def select_source(self):
+        sources = [os.path.basename(src) for src in DOCUMENT_SOURCE_DIRS]
+        selected = choose_source(sources)
+        if selected:
+            self.current_source = DOCUMENT_SOURCE_DIRS[sources.index(selected)]
+        else:
+            self.current_source = None
+        print(f"\n{Fore.WHITE}Selected source: {selected or 'All Sources'}{Style.RESET_ALL}\n")
 
     def run(self):
         self.clear_screen()
@@ -149,7 +160,9 @@ class DocuChat:
         self.clear_screen()
 
         print(f"{Fore.MAGENTA}{Style.BRIGHT}Welcome to DocuChat!")
-        print(f"{Fore.MAGENTA}Type your queries or use /quit to exit.\n")
+        print(f"{Fore.MAGENTA}Type your queries, use /quit to exit, or /source to change source.")
+
+        self.select_source()
 
         while True:
             user_input = self.get_user_input()
@@ -159,12 +172,15 @@ class DocuChat:
                 self.save_transcript()
                 print(f"{Fore.MAGENTA}{Style.BRIGHT}Goodbye!")
                 break
+            elif user_input.lower() == '/source':
+                self.select_source()
+                continue
 
             self.print_user_query(user_input)
 
             try:
                 self.start_thinking_animation()
-                context_chunks = self.query_processor.process_query(user_input)
+                context_chunks = self.query_processor.process_query(user_input, self.current_source)
                 logger.info(f"Retrieved {len(context_chunks)} relevant chunks")
                 
                 response = self.llm_interface.generate_response(user_input, context_chunks)

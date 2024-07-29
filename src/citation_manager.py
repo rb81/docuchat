@@ -39,9 +39,9 @@ class CitationManager:
         
         # Add the full citations at the end of the response
         formatted_response = formatted_response.rstrip()  # Remove trailing whitespace
-        formatted_response += "\n\nReferences:\n"
+        formatted_response += "\n\nReferences:"
         for i in sorted(unique_citations.keys()):
-            formatted_response += f"{i}. {unique_citations[i]}\n"
+            formatted_response += f"\n\n{i}. {unique_citations[i]}"
         
         logger.debug(f"Formatted response: {formatted_response}")
         return formatted_response

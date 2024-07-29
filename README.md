@@ -6,7 +6,8 @@ DocuChat is a simple Terminal RAG (Retrieval-Augmented Generation) application t
 
 ## Features
 
-- **Document Processing**: Automatically processes PDF, TXT, and DOCX files from a specified directory.
+- **Document Processing**: Automatically processes PDF, TXT, and DOCX files from multiple directories.
+- **Source Switching**: Quickly and easily switch source folders, or access all your sources together.
 - **Intelligent Indexing**: Creates and maintains an efficient index of document content for quick retrieval.
 - **Natural Language Queries**: Allows users to ask questions in natural language about the content of their documents.
 - **Citation Support**: Provides citations for information sources, linking responses directly to document pages.
@@ -31,15 +32,7 @@ DocuChat is a simple Terminal RAG (Retrieval-Augmented Generation) application t
    pip install -r requirements.txt
    ```
 
-3. Configure the application by editing the `config.py` file:
-   ```python
-   OLLAMA_BASE_URL = 'http://localhost:11434'
-   OLLAMA_MODEL = 'llama3.1:latest'
-   OLLAMA_EMBED_MODEL = 'nomic-embed-text'
-   DOCUMENT_SOURCE_DIR = '/path/to/your/documents'
-   DB_STORAGE_DIR = '/path/to/store/database'
-   TRANSCRIPT_DIR = '/path/to/save/transcripts'
-   ```
+3. Configure the application by modifying the `config.py` file with your settings.
 
 ## Usage
 
@@ -51,7 +44,9 @@ DocuChat is a simple Terminal RAG (Retrieval-Augmented Generation) application t
 
 3. Start chatting! Ask questions about your documents, and DocuChat will provide answers with relevant citations.
 
-4. Type `/quit` to exit the application and save your conversation transcript.
+4. Type `/source` to switch the source folder anytime (must be configured in the `config.py` file).
+
+5. Type `/quit` to exit the application and save your conversation transcript.
 
 ## License
 

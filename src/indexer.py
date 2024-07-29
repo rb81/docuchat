@@ -8,15 +8,13 @@ from typing import List
 from config import OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL, DB_STORAGE_DIR
 import hashlib
 from tqdm import tqdm
-
-# Configure logging
-logging.basicConfig(level=logging.ERROR)
-logger = logging.getLogger(__name__)
-
-# Disable Chroma telemetry and import PersistentClient
 import chromadb
 from chromadb.config import Settings
 from chromadb.api.types import Documents, EmbeddingFunction
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class OllamaEmbeddings(Embeddings):
     def __init__(self):
@@ -64,10 +62,10 @@ class Indexer:
         # Initialize set to keep track of processed files
         self.processed_files = set()
 
-    def create_index(self, chunks, show_progress=False):
-        logger.info(f"Creating index with {len(chunks)} chunks")
+    def create_index(self, chunks, source_dir, show_progress=False):
+        logger.info(f"Creating index for {source_dir} with {len(chunks)} chunks")
         if not chunks:
-            logger.warning("Received empty chunks list. No index will be created.")
+            logger.warning(f"Received empty chunks list for {source_dir}. No index will be created.")
             return
 
         try:
@@ -80,14 +78,14 @@ class Indexer:
             )
             
             # Use tqdm for progress bar
-            chunk_iterator = tqdm(chunks, desc="Indexing chunks", disable=not show_progress)
+            chunk_iterator = tqdm(chunks, desc=f"Indexing chunks for {source_dir}", disable=not show_progress)
             for chunk in chunk_iterator:
                 if chunk.metadata['source'] not in self.processed_files:
-                    self._add_chunk_to_collection(chunk)
+                    self._add_chunk_to_collection(chunk, source_dir)
                     self.processed_files.add(chunk.metadata['source'])
-                    self._update_cache_file(chunk.metadata['source'])
+                    self._update_cache_file(chunk.metadata['source'], source_dir)
             
-            logger.info(f"Index created and persisted successfully at {self.persist_directory}")
+            logger.info(f"Index created and persisted successfully for {source_dir} at {self.persist_directory}")
             
             # Create Langchain's Chroma wrapper
             self.vector_store = Chroma(
@@ -96,39 +94,41 @@ class Indexer:
                 embedding_function=self.embeddings
             )
         except Exception as e:
-            logger.error(f"An error occurred while creating the index: {str(e)}")
-            raise Exception(f"An error occurred while creating the index: {str(e)}")
+            logger.error(f"An error occurred while creating the index for {source_dir}: {str(e)}")
+            raise Exception(f"An error occurred while creating the index for {source_dir}: {str(e)}")
 
-    def update_index(self, new_chunks):
-        logger.info(f"Updating index with {len(new_chunks)} new chunks")
+    def update_index(self, new_chunks, source_dir):
+        logger.info(f"Updating index for {source_dir} with {len(new_chunks)} new chunks")
         if not new_chunks:
-            logger.warning("Received empty new_chunks list. No update will be performed.")
+            logger.warning(f"Received empty new_chunks list for {source_dir}. No update will be performed.")
             return
 
         if self.collection is None:
-            self.create_index(new_chunks)
+            self.create_index(new_chunks, source_dir)
         else:
             for chunk in new_chunks:
                 if chunk.metadata['source'] not in self.processed_files:
-                    self._add_chunk_to_collection(chunk)
+                    self._add_chunk_to_collection(chunk, source_dir)
                     self.processed_files.add(chunk.metadata['source'])
-                    self._update_cache_file(chunk.metadata['source'])
+                    self._update_cache_file(chunk.metadata['source'], source_dir)
             
-            logger.info(f"Index updated and persisted successfully at {self.persist_directory}")
+            logger.info(f"Index updated and persisted successfully for {source_dir} at {self.persist_directory}")
 
-    def _add_chunk_to_collection(self, chunk):
+    def _add_chunk_to_collection(self, chunk, source_dir):
+        metadata = chunk.metadata.copy()
+        metadata['source_dir'] = source_dir
         self.collection.add(
             ids=[str(uuid.uuid4())],
             documents=[chunk.page_content],
-            metadatas=[chunk.metadata]
+            metadatas=[metadata]
         )
 
-    def _update_cache_file(self, file_path):
+    def _update_cache_file(self, file_path, source_dir):
         with open(self.cache_file, 'a') as f:
             file_hash = self.get_file_hash(file_path)
-            f.write(f"{file_path}:{file_hash}\n")
+            f.write(f"{source_dir}:{file_path}:{file_hash}\n")
 
-    def search(self, query, k=4):
+    def search(self, query, source_dir=None, k=4):
         if self.vector_store is None:
             if os.path.exists(self.persist_directory):
                 logger.info(f"Loading existing Chroma index from {self.persist_directory}")
@@ -146,13 +146,18 @@ class Indexer:
                 logger.error("Index has not been created yet")
                 raise ValueError("Index has not been created yet.")
         logger.info(f"Performing similarity search for query: {query}")
-        return self.vector_store.similarity_search(query, k=k)
+        
+        if source_dir:
+            filter_dict = {"source_dir": source_dir}
+            return self.vector_store.similarity_search(query, k=k, filter=filter_dict)
+        else:
+            return self.vector_store.similarity_search(query, k=k)
 
-    def cache_document_hashes(self, files):
-        with open(self.cache_file, 'w') as f:
+    def cache_document_hashes(self, files, source_dir):
+        with open(self.cache_file, 'a') as f:
             for file_path in files:
                 file_hash = self.get_file_hash(file_path)
-                f.write(f"{file_path}:{file_hash}\n")
+                f.write(f"{source_dir}:{file_path}:{file_hash}\n")
 
     def get_file_hash(self, file_path):
         hasher = hashlib.md5()
@@ -161,16 +166,22 @@ class Indexer:
             hasher.update(buf)
         return hasher.hexdigest()
 
-    def check_for_changes(self, files):
+    def check_for_changes(self, files, source_dir):
         if not os.path.exists(self.cache_file):
             return True  # No cache file, assume changes
 
         current_hashes = {file_path: self.get_file_hash(file_path) for file_path in files}
         
         with open(self.cache_file, 'r') as f:
-            cached_hashes = dict(line.strip().split(':') for line in f)
+            cached_hashes = {}
+            for line in f:
+                parts = line.strip().split(':')
+                if len(parts) == 3:
+                    cached_source_dir, file_path, file_hash = parts
+                    if cached_source_dir == source_dir:
+                        cached_hashes[file_path] = file_hash
 
-        self.processed_files = set(cached_hashes.keys())
+        self.processed_files.update(cached_hashes.keys())
         
         return any(
             file_path not in cached_hashes or

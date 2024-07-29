@@ -37,7 +37,7 @@ def scan_files(folder_path, show_progress=False):
     if show_progress:
         print(f"Found {len(files)} supported files to process.")
         print(f"Skipped {len(skipped_files)} unsupported files.")
-        print(f"Encountered errors with {len(error_files)} files.")
+        print(f"Encountered errors with {len(error_files)} files.\n")
 
     return files
 
