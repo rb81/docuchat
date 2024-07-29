@@ -5,7 +5,7 @@ from langchain_chroma import Chroma
 from langchain.embeddings.base import Embeddings
 import requests
 from typing import List
-from config import OLLAMA_BASE_URL, DB_STORAGE_DIR
+from config import OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL, DB_STORAGE_DIR
 import hashlib
 from tqdm import tqdm
 
@@ -19,9 +19,9 @@ from chromadb.config import Settings
 from chromadb.api.types import Documents, EmbeddingFunction
 
 class OllamaEmbeddings(Embeddings):
-    def __init__(self, base_url: str, model: str = "nomic-embed-text"):
-        self.base_url = base_url
-        self.model = model
+    def __init__(self):
+        self.base_url = OLLAMA_BASE_URL
+        self.model = OLLAMA_EMBED_MODEL
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         embeddings = []
@@ -46,7 +46,7 @@ class OllamaEmbeddingFunction(EmbeddingFunction):
 
 class Indexer:
     def __init__(self):
-        self.embeddings = OllamaEmbeddings(base_url=OLLAMA_BASE_URL)
+        self.embeddings = OllamaEmbeddings()
         self.persist_directory = os.path.join(DB_STORAGE_DIR, 'chroma_db')
         self.cache_file = os.path.join(DB_STORAGE_DIR, 'document_cache.txt')
         self.chroma_settings = Settings(
